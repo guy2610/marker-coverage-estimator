@@ -1,138 +1,337 @@
-// main.cpp
-#include "types.hpp"
 #include "color_segmentation.hpp"
-#include "grid_detector.hpp"
 #include "coverage.hpp"
+#include "grid_detector.hpp"
+#include "types.hpp"
 
 #include <opencv2/opencv.hpp>
-#include <filesystem>
+
 #include <chrono>
-#include <iostream>
 #include <cmath>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <vector>
 
-using clk = std::chrono::high_resolution_clock;
+#ifndef MARKER_COVERAGE_VERSION
+#define MARKER_COVERAGE_VERSION "development"
+#endif
 
-static void emit_marker_result(const std::string& name, bool ok, FailureReason fr, bool debug_mode) {
-    if (debug_mode) {
-        if (ok)  std::cout << "marker_found " << name << "\n";
-        else     std::cout << "marker_not_found " << name << " " << fr_to_cstr(fr) << "\n";
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+void print_usage(const char* program_name) {
+    std::cout
+        << "Marker Coverage Estimator " << MARKER_COVERAGE_VERSION << "\n\n"
+        << "Detect a 3x3 color marker and estimate the percentage of the\n"
+        << "input image covered by its outer convex hull.\n\n"
+        << "Usage:\n"
+        << "  " << program_name << " [options] <image> [<image> ...]\n\n"
+        << "Options:\n"
+        << "  --debug       Print detection details and processing time\n"
+        << "  -h, --help    Show this help message\n"
+        << "  --version     Print the program version\n";
+}
+
+void emit_marker_result(
+    const std::string& name,
+    bool found,
+    FailureReason failure_reason,
+    bool debug_mode
+) {
+    if (!debug_mode) {
+        return;
     }
-    else {
-        // In non-debug we print only the required "<image> <percent>%"
-        // (on failure we will print "<image> 0%")
-        (void)fr; (void)ok; // no-op
+
+    if (found) {
+        std::cout << "marker_found " << name << "\n";
+    } else {
+        std::cout
+            << "marker_not_found "
+            << name << " "
+            << fr_to_cstr(failure_reason)
+            << "\n";
     }
 }
 
+}  // namespace
+
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cout << "the program needs pictures names as arguments\n";
-        return 1;
-    }
-
     bool debug_mode = false;
-    std::vector<std::string> images;
+    bool invalid_input = false;
+    std::vector<std::string> image_paths;
+
     for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
-        if (a == "--debug") { debug_mode = true; continue; }
-        if (std::filesystem::exists(a)) images.push_back(a);
-        else std::cerr << a << " is not a valid picture path\n";
+        const std::string argument = argv[i];
+
+        if (argument == "-h" || argument == "--help") {
+            print_usage(argv[0]);
+            return 0;
+        }
+
+        if (argument == "--version") {
+            std::cout << MARKER_COVERAGE_VERSION << "\n";
+            return 0;
+        }
+
+        if (argument == "--debug") {
+            debug_mode = true;
+            continue;
+        }
+
+        if (!argument.empty() && argument.front() == '-') {
+            std::cerr << "Unknown option: " << argument << "\n\n";
+            print_usage(argv[0]);
+            return 2;
+        }
+
+        if (!std::filesystem::is_regular_file(argument)) {
+            std::cerr << "Invalid image path: " << argument << "\n";
+            invalid_input = true;
+            continue;
+        }
+
+        image_paths.push_back(argument);
     }
-    if (images.empty()) return 1;
 
-    int pass_count = 0, fail_count = 0;
-    bool any_fail = false;
+    if (argc < 2 || image_paths.empty()) {
+        if (argc < 2) {
+            print_usage(argv[0]);
+        } else if (invalid_input) {
+            std::cerr << "No valid image files were provided.\n";
+        }
 
-    SegmentationParams segp; segp.debug = debug_mode;
-    GridParams gp; gp.debug = debug_mode;
-    // thresholds as in your tuned logic
-    gp.coverage_thresh = 0.45f; // must-have
-    gp.coverage_fallback = 0.55f; // accept even if spacing failed
-    gp.coverage_soft = 0.50f; // soft acceptance if cv within near-range
+        return 2;
+    }
 
-    for (const auto& path : images) {
-        auto t0 = clk::now();
+    int pass_count = 0;
+    int fail_count = 0;
+    bool any_detection_failed = false;
 
-        cv::Mat img = cv::imread(path, cv::IMREAD_COLOR);
-        if (img.empty()) {
-            emit_marker_result(path, false, FailureReason::FEW_PATCHES, debug_mode);
-            if (!debug_mode) std::cout << path << " 0%\n";
-            ++fail_count; any_fail = true;
+    SegmentationParams segmentation_params;
+    segmentation_params.debug = debug_mode;
+
+    GridParams grid_params;
+    grid_params.debug = debug_mode;
+
+    // Baseline thresholds retained for reproducibility.
+    grid_params.coverage_thresh = 0.45F;
+    grid_params.coverage_fallback = 0.55F;
+    grid_params.coverage_soft = 0.50F;
+
+    for (const auto& path : image_paths) {
+        const auto start_time = Clock::now();
+
+        const cv::Mat image = cv::imread(path, cv::IMREAD_COLOR);
+        if (image.empty()) {
+            emit_marker_result(
+                path,
+                false,
+                FailureReason::FEW_PATCHES,
+                debug_mode
+            );
+
+            if (!debug_mode) {
+                std::cout << path << " 0%\n";
+            }
+
+            ++fail_count;
+            any_detection_failed = true;
             continue;
         }
 
-        // 1) Color segmentation -> candidate patches
-        auto patches = segment_color_patches(img, segp);
+        const auto patches =
+            segment_color_patches(image, segmentation_params);
+
         if (patches.size() < 3) {
-            emit_marker_result(path, false, FailureReason::FEW_PATCHES, debug_mode);
-            if (!debug_mode) std::cout << path << " 0%\n";
-            ++fail_count; any_fail = true;
+            emit_marker_result(
+                path,
+                false,
+                FailureReason::FEW_PATCHES,
+                debug_mode
+            );
+
+            if (!debug_mode) {
+                std::cout << path << " 0%\n";
+            }
+
+            ++fail_count;
+            any_detection_failed = true;
             continue;
         }
 
-        // 2) Grid detection + spacing validation (PCA-rotated coords, CV thresholds)
-        GridDetection gd;
-        FailureReason fr = detect_grid_and_spacing(patches, gd, gp);
-        if (fr == FailureReason::ASSIGN_GRID || fr == FailureReason::SPACING) {
-            emit_marker_result(path, false, fr, debug_mode);
-            if (!debug_mode) std::cout << path << " 0%\n";
-            ++fail_count; any_fail = true;
+        GridDetection grid_detection;
+        const FailureReason grid_failure =
+            detect_grid_and_spacing(
+                patches,
+                grid_detection,
+                grid_params
+            );
+
+        if (
+            grid_failure == FailureReason::ASSIGN_GRID ||
+            grid_failure == FailureReason::SPACING
+        ) {
+            emit_marker_result(
+                path,
+                false,
+                grid_failure,
+                debug_mode
+            );
+
+            if (!debug_mode) {
+                std::cout << path << " 0%\n";
+            }
+
+            ++fail_count;
+            any_detection_failed = true;
 
             if (debug_mode) {
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clk::now() - t0).count();
-                std::cout << path << " took " << ms << " ms\n";
+                const auto elapsed =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        Clock::now() - start_time
+                    ).count();
+
+                std::cout << path << " took " << elapsed << " ms\n";
             }
+
             continue;
         }
 
-        // 3) Coverage (convex hull of 9 rect corners) vs IMAGE area
-        // NOTE: ensure your coverage.hpp/.cpp signature is:
-        // CoverageResult compute_coverage_from_grid(const Patch grid[3][3], cv::Size imageSize);
-        auto cov = compute_coverage_from_grid(gd.grid, img.size());
-        if (cov.hull_area <= 0.0 || cov.image_area <= 0.0) {
-            emit_marker_result(path, false, FailureReason::BAD_BBOX, debug_mode);
-            if (!debug_mode) std::cout << path << " 0%\n";
-            ++fail_count; any_fail = true;
+        const auto coverage =
+            compute_coverage_from_grid(
+                grid_detection.grid,
+                image.size()
+            );
+
+        if (
+            coverage.hull_area <= 0.0 ||
+            coverage.image_area <= 0.0
+        ) {
+            emit_marker_result(
+                path,
+                false,
+                FailureReason::BAD_BBOX,
+                debug_mode
+            );
+
+            if (!debug_mode) {
+                std::cout << path << " 0%\n";
+            }
+
+            ++fail_count;
+            any_detection_failed = true;
             continue;
         }
 
-        // 4) Thresholds + fallbacks
-        bool spacing_ok = gd.spacing_ok;
-        if (!spacing_ok && cov.ratio >= gp.coverage_fallback) spacing_ok = true;
-        if (!spacing_ok && gd.cvx <= 0.60f && gd.cvy <= 0.70f && cov.ratio >= gp.coverage_soft) spacing_ok = true;
+        bool spacing_ok = grid_detection.spacing_ok;
 
-        bool ok = (spacing_ok && cov.ratio >= gp.coverage_thresh);
-        emit_marker_result(path, ok, ok ? FailureReason::NONE : FailureReason::LOW_COVERAGE, debug_mode);
+        if (
+            !spacing_ok &&
+            coverage.ratio >= grid_params.coverage_fallback
+        ) {
+            spacing_ok = true;
+        }
 
-        if (ok) {
+        if (
+            !spacing_ok &&
+            grid_detection.cvx <= 0.60F &&
+            grid_detection.cvy <= 0.70F &&
+            coverage.ratio >= grid_params.coverage_soft
+        ) {
+            spacing_ok = true;
+        }
+
+        const bool marker_found =
+            spacing_ok &&
+            coverage.ratio >= grid_params.coverage_thresh;
+
+        emit_marker_result(
+            path,
+            marker_found,
+            marker_found
+                ? FailureReason::NONE
+                : FailureReason::LOW_COVERAGE,
+            debug_mode
+        );
+
+        if (marker_found) {
             ++pass_count;
-            int pct = (int)std::lround(cov.ratio * 100.0);
-            if (!debug_mode) std::cout << path << " " << pct << "%\n";
-            if (debug_mode) {
-                std::cout << "[coverage] hull=" << cov.hull_area
-                    << " image=" << cov.image_area
-                    << " ratio=" << cov.ratio << " (" << pct << "%)\n";
+
+            const int percentage =
+                static_cast<int>(
+                    std::lround(coverage.ratio * 100.0)
+                );
+
+            if (!debug_mode) {
+                std::cout
+                    << path << " "
+                    << percentage << "%\n";
+            } else {
+                std::cout
+                    << "[coverage] hull="
+                    << coverage.hull_area
+                    << " image="
+                    << coverage.image_area
+                    << " ratio="
+                    << coverage.ratio
+                    << " ("
+                    << percentage
+                    << "%)\n";
             }
-        }
-        else {
-            ++fail_count; any_fail = true;
-            if (!debug_mode) std::cout << path << " 0%\n";
-            if (debug_mode) {
-                std::cout << "[final] cvx=" << gd.cvx << " cvy=" << gd.cvy
-                    << " coverage_ratio=" << cov.ratio << "\n";
+        } else {
+            ++fail_count;
+            any_detection_failed = true;
+
+            if (!debug_mode) {
+                std::cout << path << " 0%\n";
+            } else {
+                std::cout
+                    << "[final] cvx="
+                    << grid_detection.cvx
+                    << " cvy="
+                    << grid_detection.cvy
+                    << " coverage_ratio="
+                    << coverage.ratio
+                    << "\n";
             }
         }
 
         if (debug_mode) {
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clk::now() - t0).count();
-            if (ms > 200) std::cerr << "[warn] " << path << " took " << ms << " ms (>200ms)\n";
-            else          std::cout << path << " took " << ms << " ms\n";
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    Clock::now() - start_time
+                ).count();
+
+            if (elapsed > 200) {
+                std::cerr
+                    << "[warn] "
+                    << path
+                    << " took "
+                    << elapsed
+                    << " ms (>200ms)\n";
+            } else {
+                std::cout
+                    << path
+                    << " took "
+                    << elapsed
+                    << " ms\n";
+            }
         }
     }
 
-    std::cout << "\nSummary: passed=" << pass_count
-        << " failed=" << fail_count
-        << " out of " << (pass_count + fail_count) << std::endl;
+    std::cout
+        << "\nSummary: passed="
+        << pass_count
+        << " failed="
+        << fail_count
+        << " out of "
+        << pass_count + fail_count
+        << "\n";
 
-    return any_fail ? 1 : 0;
+    if (invalid_input) {
+        return 2;
+    }
+
+    return any_detection_failed ? 1 : 0;
 }

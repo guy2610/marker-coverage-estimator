@@ -14,7 +14,9 @@ static void pca_rotate(const std::vector<cv::Point2f>& pts,
     rotated.resize(pts.size());
     for (int i=0;i<(int)pts.size();++i) {
         Vec2f v(pts[i].x-mean.x, pts[i].y-mean.y);
-        Mat vm = (Mat_<float>(1,2) << v[0], v[1]);
+        cv::Mat vm(1, 2, CV_32F);
+        vm.at<float>(0, 0) = v[0];
+        vm.at<float>(0, 1) = v[1];
         Mat r = vm * eigvecs.t();
         rotated[i] = Point2f(r.at<float>(0,0), r.at<float>(0,1));
     }
