@@ -21,3 +21,9 @@ x64/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+
+# Local generated output
+output/
+docs/images/*.tmp
+.DS_Store
+compile_commands.json
