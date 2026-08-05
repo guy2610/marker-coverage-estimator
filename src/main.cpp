@@ -1,14 +1,15 @@
-#include "color_segmentation.hpp"
-#include "coverage.hpp"
-#include "grid_detector.hpp"
+#include "detection.hpp"
 #include "types.hpp"
+#include "visualization.hpp"
 
 #include <opencv2/opencv.hpp>
 
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -22,43 +23,95 @@ using Clock = std::chrono::steady_clock;
 
 void print_usage(const char* program_name) {
     std::cout
-        << "Marker Coverage Estimator " << MARKER_COVERAGE_VERSION << "\n\n"
+        << "Marker Coverage Estimator "
+        << MARKER_COVERAGE_VERSION
+        << "\n\n"
         << "Detect a 3x3 color marker and estimate the percentage of the\n"
         << "input image covered by its outer convex hull.\n\n"
         << "Usage:\n"
-        << "  " << program_name << " [options] <image> [<image> ...]\n\n"
+        << "  "
+        << program_name
+        << " [options] <image> [<image> ...]\n\n"
         << "Options:\n"
-        << "  --debug       Print detection details and processing time\n"
-        << "  -h, --help    Show this help message\n"
-        << "  --version     Print the program version\n";
+        << "  --debug          Print intermediate detection metrics\n"
+        << "  --legacy-output  Reproduce the original 18/20 output\n"
+        << "  --visualize-dir DIR\n"
+        << "                    Save annotated debug images to DIR\n"
+        << "  -h, --help       Show this help message\n"
+        << "  --version        Print the program version\n";
 }
 
-void emit_marker_result(
-    const std::string& name,
-    bool found,
-    FailureReason failure_reason,
-    bool debug_mode
+std::string format_percentage(
+    double ratio,
+    int decimal_places
 ) {
-    if (!debug_mode) {
-        return;
+    std::ostringstream output;
+
+    output
+        << std::fixed
+        << std::setprecision(decimal_places)
+        << ratio * 100.0
+        << "%";
+
+    return output.str();
+}
+
+void print_debug_result(
+    const std::string& path,
+    const DetectionResult& result,
+    long long elapsed_microseconds
+) {
+    std::cout
+        << "[analysis] image="
+        << path
+        << " patches="
+        << result.patch_count
+        << " grid_assigned="
+        << (result.grid.ok ? "yes" : "no")
+        << " spacing_strict="
+        << (result.grid.spacing_ok ? "yes" : "no")
+        << " spacing_soft="
+        << (result.grid.spacing_soft_ok ? "yes" : "no")
+        << " status="
+        << detection_status_to_cstr(result.status);
+
+    if (result.grid.ok) {
+        std::cout
+            << " cvx="
+            << result.grid.cvx
+            << " cvy="
+            << result.grid.cvy;
     }
 
-    if (found) {
-        std::cout << "marker_found " << name << "\n";
-    } else {
+    if (result.coverage_available) {
         std::cout
-            << "marker_not_found "
-            << name << " "
-            << fr_to_cstr(failure_reason)
-            << "\n";
+            << " coverage="
+            << format_percentage(
+                result.coverage.ratio,
+                2
+            )
+            << " hull_area="
+            << result.coverage.hull_area
+            << " image_area="
+            << result.coverage.image_area;
     }
+
+    std::cout
+        << " legacy_accepted="
+        << (result.legacy_accepted ? "yes" : "no")
+        << " elapsed_us="
+        << elapsed_microseconds
+        << "\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
     bool debug_mode = false;
+    bool legacy_output = false;
     bool invalid_input = false;
+
+    std::filesystem::path visualization_directory;
     std::vector<std::string> image_paths;
 
     for (int i = 1; i < argc; ++i) {
@@ -79,14 +132,39 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        if (argument == "--legacy-output") {
+            legacy_output = true;
+            continue;
+        }
+
+        if (argument == "--visualize-dir") {
+            if (i + 1 >= argc) {
+                std::cerr
+                    << "--visualize-dir requires a directory path.\n";
+
+                return 2;
+            }
+
+            visualization_directory = argv[++i];
+            continue;
+        }
+
         if (!argument.empty() && argument.front() == '-') {
-            std::cerr << "Unknown option: " << argument << "\n\n";
+            std::cerr
+                << "Unknown option: "
+                << argument
+                << "\n\n";
+
             print_usage(argv[0]);
             return 2;
         }
 
         if (!std::filesystem::is_regular_file(argument)) {
-            std::cerr << "Invalid image path: " << argument << "\n";
+            std::cerr
+                << "Invalid image path: "
+                << argument
+                << "\n";
+
             invalid_input = true;
             continue;
         }
@@ -97,16 +175,31 @@ int main(int argc, char** argv) {
     if (argc < 2 || image_paths.empty()) {
         if (argc < 2) {
             print_usage(argv[0]);
-        } else if (invalid_input) {
-            std::cerr << "No valid image files were provided.\n";
+        } else {
+            std::cerr
+                << "No valid image files were provided.\n";
         }
 
         return 2;
     }
 
-    int pass_count = 0;
-    int fail_count = 0;
-    bool any_detection_failed = false;
+    if (!visualization_directory.empty()) {
+        std::error_code directory_error;
+
+        std::filesystem::create_directories(
+            visualization_directory,
+            directory_error
+        );
+
+        if (directory_error) {
+            std::cerr
+                << "Could not create visualization directory: "
+                << visualization_directory
+                << "\n";
+
+            return 2;
+        }
+    }
 
     SegmentationParams segmentation_params;
     segmentation_params.debug = debug_mode;
@@ -114,224 +207,205 @@ int main(int argc, char** argv) {
     GridParams grid_params;
     grid_params.debug = debug_mode;
 
-    // Baseline thresholds retained for reproducibility.
-    grid_params.coverage_thresh = 0.45F;
-    grid_params.coverage_fallback = 0.55F;
-    grid_params.coverage_soft = 0.50F;
+    const LegacyDecisionParams legacy_params;
+
+    int detected_count = 0;
+    int warning_count = 0;
+    int not_detected_count = 0;
+
+    int legacy_pass_count = 0;
+    int legacy_fail_count = 0;
+
+    bool processing_error = false;
 
     for (const auto& path : image_paths) {
         const auto start_time = Clock::now();
 
-        const cv::Mat image = cv::imread(path, cv::IMREAD_COLOR);
-        if (image.empty()) {
-            emit_marker_result(
-                path,
-                false,
-                FailureReason::FEW_PATCHES,
-                debug_mode
+        const cv::Mat image =
+            cv::imread(path, cv::IMREAD_COLOR);
+
+        const DetectionResult result =
+            analyze_marker(
+                image,
+                segmentation_params,
+                grid_params,
+                legacy_params
             );
 
-            if (!debug_mode) {
-                std::cout << path << " 0%\n";
-            }
-
-            ++fail_count;
-            any_detection_failed = true;
-            continue;
-        }
-
-        const auto patches =
-            segment_color_patches(image, segmentation_params);
-
-        if (patches.size() < 3) {
-            emit_marker_result(
-                path,
-                false,
-                FailureReason::FEW_PATCHES,
-                debug_mode
-            );
-
-            if (!debug_mode) {
-                std::cout << path << " 0%\n";
-            }
-
-            ++fail_count;
-            any_detection_failed = true;
-            continue;
-        }
-
-        GridDetection grid_detection;
-        const FailureReason grid_failure =
-            detect_grid_and_spacing(
-                patches,
-                grid_detection,
-                grid_params
-            );
+        const auto elapsed_microseconds =
+            std::chrono::duration_cast<
+                std::chrono::microseconds
+            >(
+                Clock::now() - start_time
+            ).count();
 
         if (
-            grid_failure == FailureReason::ASSIGN_GRID ||
-            grid_failure == FailureReason::SPACING
+            result.failure_reason ==
+            FailureReason::INVALID_IMAGE
         ) {
-            emit_marker_result(
-                path,
-                false,
-                grid_failure,
-                debug_mode
-            );
-
-            if (!debug_mode) {
-                std::cout << path << " 0%\n";
-            }
-
-            ++fail_count;
-            any_detection_failed = true;
-
-            if (debug_mode) {
-                const auto elapsed =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        Clock::now() - start_time
-                    ).count();
-
-                std::cout << path << " took " << elapsed << " ms\n";
-            }
-
-            continue;
+            processing_error = true;
         }
 
-        const auto coverage =
-            compute_coverage_from_grid(
-                grid_detection.grid,
-                image.size()
-            );
-
-        if (
-            coverage.hull_area <= 0.0 ||
-            coverage.image_area <= 0.0
-        ) {
-            emit_marker_result(
-                path,
-                false,
-                FailureReason::BAD_BBOX,
-                debug_mode
-            );
-
-            if (!debug_mode) {
-                std::cout << path << " 0%\n";
-            }
-
-            ++fail_count;
-            any_detection_failed = true;
-            continue;
-        }
-
-        bool spacing_ok = grid_detection.spacing_ok;
-
-        if (
-            !spacing_ok &&
-            coverage.ratio >= grid_params.coverage_fallback
-        ) {
-            spacing_ok = true;
-        }
-
-        if (
-            !spacing_ok &&
-            grid_detection.cvx <= 0.60F &&
-            grid_detection.cvy <= 0.70F &&
-            coverage.ratio >= grid_params.coverage_soft
-        ) {
-            spacing_ok = true;
-        }
-
-        const bool marker_found =
-            spacing_ok &&
-            coverage.ratio >= grid_params.coverage_thresh;
-
-        emit_marker_result(
-            path,
-            marker_found,
-            marker_found
-                ? FailureReason::NONE
-                : FailureReason::LOW_COVERAGE,
-            debug_mode
-        );
-
-        if (marker_found) {
-            ++pass_count;
-
+        if (legacy_output) {
             const int percentage =
-                static_cast<int>(
-                    std::lround(coverage.ratio * 100.0)
-                );
+                result.legacy_accepted &&
+                result.coverage_available
+                    ? static_cast<int>(
+                        std::lround(
+                            result.coverage.ratio * 100.0
+                        )
+                    )
+                    : 0;
 
-            if (!debug_mode) {
-                std::cout
-                    << path << " "
-                    << percentage << "%\n";
+            std::cout
+                << path
+                << " "
+                << percentage
+                << "%\n";
+
+            if (result.legacy_accepted) {
+                ++legacy_pass_count;
             } else {
-                std::cout
-                    << "[coverage] hull="
-                    << coverage.hull_area
-                    << " image="
-                    << coverage.image_area
-                    << " ratio="
-                    << coverage.ratio
-                    << " ("
-                    << percentage
-                    << "%)\n";
+                ++legacy_fail_count;
             }
+        } else if (
+            result.status ==
+            DetectionStatus::DETECTED
+        ) {
+            std::cout
+                << path
+                << " marker_found coverage="
+                << format_percentage(
+                    result.coverage.ratio,
+                    1
+                )
+                << "\n";
+
+            ++detected_count;
+        } else if (
+            result.status ==
+            DetectionStatus::DETECTED_WITH_WARNING
+        ) {
+            std::cout
+                << path
+                << " marker_found coverage="
+                << format_percentage(
+                    result.coverage.ratio,
+                    1
+                )
+                << " warning=IRREGULAR_SPACING\n";
+
+            ++warning_count;
         } else {
-            ++fail_count;
-            any_detection_failed = true;
+            std::cout
+                << path
+                << " marker_not_found reason="
+                << fr_to_cstr(result.failure_reason)
+                << "\n";
 
-            if (!debug_mode) {
-                std::cout << path << " 0%\n";
-            } else {
-                std::cout
-                    << "[final] cvx="
-                    << grid_detection.cvx
-                    << " cvy="
-                    << grid_detection.cvy
-                    << " coverage_ratio="
-                    << coverage.ratio
-                    << "\n";
-            }
+            ++not_detected_count;
         }
 
         if (debug_mode) {
-            const auto elapsed =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    Clock::now() - start_time
-                ).count();
+            print_debug_result(
+                path,
+                result,
+                elapsed_microseconds
+            );
+        }
 
-            if (elapsed > 200) {
+        if (
+            !visualization_directory.empty() &&
+            !image.empty()
+        ) {
+            const cv::Mat visualization =
+                render_detection_debug(
+                    image,
+                    result
+                );
+
+            const std::filesystem::path input_path(
+                path
+            );
+
+            const std::filesystem::path output_path =
+                visualization_directory /
+                (
+                    input_path.stem().string() +
+                    "_annotated.png"
+                );
+
+            try {
+                if (
+                    visualization.empty() ||
+                    !cv::imwrite(
+                        output_path.string(),
+                        visualization
+                    )
+                ) {
+                    std::cerr
+                        << "Could not save visualization: "
+                        << output_path
+                        << "\n";
+
+                    processing_error = true;
+                } else if (debug_mode) {
+                    std::cout
+                        << "[visualization] "
+                        << output_path
+                        << "\n";
+                }
+            } catch (const cv::Exception& exception) {
                 std::cerr
-                    << "[warn] "
-                    << path
-                    << " took "
-                    << elapsed
-                    << " ms (>200ms)\n";
-            } else {
-                std::cout
-                    << path
-                    << " took "
-                    << elapsed
-                    << " ms\n";
+                    << "Could not save visualization: "
+                    << output_path
+                    << " ("
+                    << exception.what()
+                    << ")\n";
+
+                processing_error = true;
             }
         }
     }
 
-    std::cout
-        << "\nSummary: passed="
-        << pass_count
-        << " failed="
-        << fail_count
-        << " out of "
-        << pass_count + fail_count
-        << "\n";
+    if (legacy_output) {
+        std::cout
+            << "\nSummary: passed="
+            << legacy_pass_count
+            << " failed="
+            << legacy_fail_count
+            << " out of "
+            << legacy_pass_count + legacy_fail_count
+            << "\n";
+    } else {
+        std::cout
+            << "\nSummary: detected="
+            << detected_count
+            << " warnings="
+            << warning_count
+            << " not_detected="
+            << not_detected_count
+            << " out of "
+            << (
+                detected_count +
+                warning_count +
+                not_detected_count
+            )
+            << "\n";
+    }
 
     if (invalid_input) {
         return 2;
     }
 
-    return any_detection_failed ? 1 : 0;
+    if (processing_error) {
+        return 3;
+    }
+
+    if (legacy_output && legacy_fail_count > 0) {
+        return 1;
+    }
+
+    // A valid image without a marker is a successful analysis result.
+    return 0;
 }

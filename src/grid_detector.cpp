@@ -34,6 +34,8 @@ FailureReason detect_grid_and_spacing(
     GridDetection& out,
     const GridParams& params)
 {
+    out = GridDetection{};
+
     if (patches.size() < 3) return FailureReason::FEW_PATCHES;
 
     // PCA rotate
@@ -46,7 +48,25 @@ FailureReason detect_grid_and_spacing(
     Mat sampY((int)patches.size(),1,CV_32F);
     for (int i=0;i<(int)patches.size();++i) sampY.at<float>(i,0)=out.rot[i].y;
     Mat labelsY, centersY;
-    kmeans(sampY, 3, labelsY, TermCriteria(TermCriteria::EPS+TermCriteria::MAX_ITER,100,1e-3), 5, KMEANS_PP_CENTERS, centersY);
+
+    // OpenCV K-means uses a global random-number generator for
+    // KMEANS_PP_CENTERS. Resetting it makes the result independent of
+    // image processing order and reproducible across repeated runs.
+    cv::setRNGSeed(0);
+
+    kmeans(
+        sampY,
+        3,
+        labelsY,
+        TermCriteria(
+            TermCriteria::EPS + TermCriteria::MAX_ITER,
+            100,
+            1e-3
+        ),
+        5,
+        KMEANS_PP_CENTERS,
+        centersY
+    );
 
     struct ClusterInfo{ float cy; int k; };
     std::vector<ClusterInfo> orderY; orderY.reserve(3);
@@ -58,7 +78,24 @@ FailureReason detect_grid_and_spacing(
     Mat sampX((int)patches.size(),1,CV_32F);
     for (int i=0;i<(int)patches.size();++i) sampX.at<float>(i,0)=out.rot[i].x;
     Mat labelsX, centersX;
-    kmeans(sampX, 3, labelsX, TermCriteria(TermCriteria::EPS+TermCriteria::MAX_ITER,100,1e-3), 5, KMEANS_PP_CENTERS, centersX);
+
+    // Use a separate deterministic initialization for the column
+    // clustering as well.
+    cv::setRNGSeed(0);
+
+    kmeans(
+        sampX,
+        3,
+        labelsX,
+        TermCriteria(
+            TermCriteria::EPS + TermCriteria::MAX_ITER,
+            100,
+            1e-3
+        ),
+        5,
+        KMEANS_PP_CENTERS,
+        centersX
+    );
 
     struct Cx{ float x; int k; };
     std::vector<Cx> orderX; orderX.reserve(3);
@@ -120,6 +157,8 @@ FailureReason detect_grid_and_spacing(
     }
     if (assigned != 9) return FailureReason::ASSIGN_GRID;
 
+    out.ok = true;
+
     // Spacing check on rotated coords
     auto sort_row_by_xp = [&](int r){
         std::array<Patch,3> row = { out.grid[r][0], out.grid[r][1], out.grid[r][2] };
@@ -160,6 +199,13 @@ FailureReason detect_grid_and_spacing(
     out.cvx = sdDxN/meanDxN;
     out.cvy = sdDyN/meanDyN;
 
-    out.spacing_ok = (out.cvx <= params.cvx_thresh && out.cvy <= params.cvy_thresh);
+    out.spacing_ok =
+        out.cvx <= params.cvx_thresh &&
+        out.cvy <= params.cvy_thresh;
+
+    out.spacing_soft_ok =
+        out.cvx <= params.cvx_soft_thresh &&
+        out.cvy <= params.cvy_soft_thresh;
+
     return FailureReason::NONE;
 }

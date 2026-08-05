@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 
 project(
   MarkerCoverageEstimator
-  VERSION 0.2.0
+  VERSION 0.3.0
   DESCRIPTION "Detect a 3x3 color marker and estimate its image coverage"
   LANGUAGES CXX
 )
@@ -15,6 +15,8 @@ find_package(OpenCV 4 REQUIRED)
 
 add_executable(marker_coverage
   src/main.cpp
+  src/detection.cpp
+  src/visualization.cpp
   src/color_segmentation.cpp
   src/grid_detector.cpp
   src/coverage.cpp
