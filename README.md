@@ -1,6 +1,6 @@
 # Marker Coverage Estimator
 
-[![CI](https://github.com/guy2610/marker-coverage-estimator/actions/workflows/ci.yml/badge.svg?branch=portfolio-upgrade)](https://github.com/guy2610/marker-coverage-estimator/actions/workflows/ci.yml)
+[![CI](https://github.com/guy2610/marker-coverage-estimator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/guy2610/marker-coverage-estimator/actions/workflows/ci.yml)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg)
 
