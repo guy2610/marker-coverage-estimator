@@ -255,3 +255,12 @@ See [docs/TESTING.md](docs/TESTING.md) for details.
 - The expected marker color arrangement is not validated.
 - Spacing thresholds are heuristic.
 - The public synthetic set is not an accuracy benchmark.
+
+## License
+
+The source code and public synthetic assets in this repository are available
+under the [MIT License](LICENSE).
+
+The license does not apply to the private third-party evaluation material
+described in [docs/DATASET.md](docs/DATASET.md), which is not distributed in
+this repository.
