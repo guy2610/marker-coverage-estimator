@@ -203,25 +203,7 @@ A valid image without an accepted marker is still a successful program
 execution. The CLI therefore exits with code `0` after completing the
 analysis.
 
-## 8. Legacy mode
-
-`--legacy-output` retains the original assignment decision rules for
-regression comparison.
-
-The original model mixed coverage and detection:
-
-```text
-coverage threshold: 0.45
-coverage fallback:  0.55
-soft coverage:      0.50
-```
-
-Coverage could therefore accept an irregular grid or reject a geometrically
-regular but small marker.
-
-This behavior is intentionally isolated from the normal detection model.
-
-## 9. Diagnostics
+## 8. Diagnostics
 
 `--debug` prints:
 
@@ -242,7 +224,7 @@ This behavior is intentionally isolated from the normal detection model.
 - the coverage convex hull;
 - detection metrics.
 
-## 10. Complexity
+## 9. Complexity
 
 Let:
 
@@ -262,7 +244,7 @@ Approximate costs are:
 
 For the supplied images, `N` is small.
 
-## 11. Known limitations
+## 10. Known limitations
 
 - fixed HSV thresholds;
 - no illumination adaptation;

@@ -5,7 +5,6 @@
 #include <opencv2/opencv.hpp>
 
 #include <chrono>
-#include <cmath>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -34,7 +33,6 @@ void print_usage(const char* program_name) {
         << " [options] <image> [<image> ...]\n\n"
         << "Options:\n"
         << "  --debug          Print intermediate detection metrics\n"
-        << "  --legacy-output  Reproduce the original 18/20 output\n"
         << "  --visualize-dir DIR\n"
         << "                    Save annotated debug images to DIR\n"
         << "  -h, --help       Show this help message\n"
@@ -97,8 +95,6 @@ void print_debug_result(
     }
 
     std::cout
-        << " legacy_accepted="
-        << (result.legacy_accepted ? "yes" : "no")
         << " elapsed_us="
         << elapsed_microseconds
         << "\n";
@@ -108,22 +104,28 @@ void print_debug_result(
 
 int main(int argc, char** argv) {
     bool debug_mode = false;
-    bool legacy_output = false;
     bool invalid_input = false;
 
     std::filesystem::path visualization_directory;
     std::vector<std::string> image_paths;
 
-    for (int i = 1; i < argc; ++i) {
-        const std::string argument = argv[i];
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument =
+            argv[index];
 
-        if (argument == "-h" || argument == "--help") {
+        if (
+            argument == "-h" ||
+            argument == "--help"
+        ) {
             print_usage(argv[0]);
             return 0;
         }
 
         if (argument == "--version") {
-            std::cout << MARKER_COVERAGE_VERSION << "\n";
+            std::cout
+                << MARKER_COVERAGE_VERSION
+                << "\n";
+
             return 0;
         }
 
@@ -132,24 +134,25 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        if (argument == "--legacy-output") {
-            legacy_output = true;
-            continue;
-        }
-
         if (argument == "--visualize-dir") {
-            if (i + 1 >= argc) {
+            if (index + 1 >= argc) {
                 std::cerr
-                    << "--visualize-dir requires a directory path.\n";
+                    << "--visualize-dir requires "
+                    << "a directory path.\n";
 
                 return 2;
             }
 
-            visualization_directory = argv[++i];
+            visualization_directory =
+                argv[++index];
+
             continue;
         }
 
-        if (!argument.empty() && argument.front() == '-') {
+        if (
+            !argument.empty() &&
+            argument.front() == '-'
+        ) {
             std::cerr
                 << "Unknown option: "
                 << argument
@@ -159,7 +162,11 @@ int main(int argc, char** argv) {
             return 2;
         }
 
-        if (!std::filesystem::is_regular_file(argument)) {
+        if (
+            !std::filesystem::is_regular_file(
+                argument
+            )
+        ) {
             std::cerr
                 << "Invalid image path: "
                 << argument
@@ -207,29 +214,27 @@ int main(int argc, char** argv) {
     GridParams grid_params;
     grid_params.debug = debug_mode;
 
-    const LegacyDecisionParams legacy_params;
-
     int detected_count = 0;
     int warning_count = 0;
     int not_detected_count = 0;
 
-    int legacy_pass_count = 0;
-    int legacy_fail_count = 0;
-
     bool processing_error = false;
 
     for (const auto& path : image_paths) {
-        const auto start_time = Clock::now();
+        const auto start_time =
+            Clock::now();
 
         const cv::Mat image =
-            cv::imread(path, cv::IMREAD_COLOR);
+            cv::imread(
+                path,
+                cv::IMREAD_COLOR
+            );
 
         const DetectionResult result =
             analyze_marker(
                 image,
                 segmentation_params,
-                grid_params,
-                legacy_params
+                grid_params
             );
 
         const auto elapsed_microseconds =
@@ -246,29 +251,7 @@ int main(int argc, char** argv) {
             processing_error = true;
         }
 
-        if (legacy_output) {
-            const int percentage =
-                result.legacy_accepted &&
-                result.coverage_available
-                    ? static_cast<int>(
-                        std::lround(
-                            result.coverage.ratio * 100.0
-                        )
-                    )
-                    : 0;
-
-            std::cout
-                << path
-                << " "
-                << percentage
-                << "%\n";
-
-            if (result.legacy_accepted) {
-                ++legacy_pass_count;
-            } else {
-                ++legacy_fail_count;
-            }
-        } else if (
+        if (
             result.status ==
             DetectionStatus::DETECTED
         ) {
@@ -300,7 +283,9 @@ int main(int argc, char** argv) {
             std::cout
                 << path
                 << " marker_not_found reason="
-                << fr_to_cstr(result.failure_reason)
+                << fr_to_cstr(
+                    result.failure_reason
+                )
                 << "\n";
 
             ++not_detected_count;
@@ -355,7 +340,9 @@ int main(int argc, char** argv) {
                         << output_path
                         << "\n";
                 }
-            } catch (const cv::Exception& exception) {
+            } catch (
+                const cv::Exception& exception
+            ) {
                 std::cerr
                     << "Could not save visualization: "
                     << output_path
@@ -368,31 +355,20 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (legacy_output) {
-        std::cout
-            << "\nSummary: passed="
-            << legacy_pass_count
-            << " failed="
-            << legacy_fail_count
-            << " out of "
-            << legacy_pass_count + legacy_fail_count
-            << "\n";
-    } else {
-        std::cout
-            << "\nSummary: detected="
-            << detected_count
-            << " warnings="
-            << warning_count
-            << " not_detected="
-            << not_detected_count
-            << " out of "
-            << (
-                detected_count +
-                warning_count +
-                not_detected_count
-            )
-            << "\n";
-    }
+    std::cout
+        << "\nSummary: detected="
+        << detected_count
+        << " warnings="
+        << warning_count
+        << " not_detected="
+        << not_detected_count
+        << " out of "
+        << (
+            detected_count +
+            warning_count +
+            not_detected_count
+        )
+        << "\n";
 
     if (invalid_input) {
         return 2;
@@ -400,10 +376,6 @@ int main(int argc, char** argv) {
 
     if (processing_error) {
         return 3;
-    }
-
-    if (legacy_output && legacy_fail_count > 0) {
-        return 1;
     }
 
     // A valid image without a marker is a successful analysis result.

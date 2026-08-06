@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(
   MarkerCoverageEstimator
-  VERSION 0.4.0
+  VERSION 0.5.0
   DESCRIPTION
     "Detect a 3x3 color marker and estimate its image coverage"
   LANGUAGES CXX
@@ -89,6 +89,34 @@ target_compile_definitions(
 
 enable_project_warnings(marker_coverage)
 
+add_executable(
+  marker_coverage_synthetic_generator
+  tools/generate_synthetic_dataset.cpp
+)
+
+set_target_properties(
+  marker_coverage_synthetic_generator
+  PROPERTIES
+    OUTPUT_NAME "generate-synthetic-dataset"
+)
+
+target_include_directories(
+  marker_coverage_synthetic_generator
+  SYSTEM
+  PRIVATE
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+target_link_libraries(
+  marker_coverage_synthetic_generator
+  PRIVATE
+    ${OpenCV_LIBS}
+)
+
+enable_project_warnings(
+  marker_coverage_synthetic_generator
+)
+
 include(CTest)
 
 if(BUILD_TESTING)
@@ -125,6 +153,8 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli.py
       --executable
       $<TARGET_FILE:marker_coverage>
+      --generator
+      $<TARGET_FILE:marker_coverage_synthetic_generator>
       --project-root
       ${CMAKE_CURRENT_SOURCE_DIR}
   )

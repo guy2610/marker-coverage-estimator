@@ -20,11 +20,12 @@ enum class FailureReason {
     SPACING = 3,
     SMALL_HULL = 4,
     BAD_BBOX = 5,
-    LOW_COVERAGE = 6,
-    INVALID_IMAGE = 7
+    INVALID_IMAGE = 6
 };
 
-inline const char* fr_to_cstr(FailureReason reason) {
+inline const char* fr_to_cstr(
+    FailureReason reason
+) {
     switch (reason) {
     case FailureReason::NONE:
         return "OK";
@@ -38,8 +39,6 @@ inline const char* fr_to_cstr(FailureReason reason) {
         return "HULL_TOO_SMALL";
     case FailureReason::BAD_BBOX:
         return "INVALID_BBOX";
-    case FailureReason::LOW_COVERAGE:
-        return "LOW_COVERAGE";
     case FailureReason::INVALID_IMAGE:
         return "INVALID_IMAGE";
     default:
@@ -69,20 +68,14 @@ inline const char* detection_status_to_cstr(
 }
 
 struct GridDetection {
-    // True when nine candidate patches were assigned to a 3x3 grid.
     bool ok = false;
 
     Patch grid[3][3]{};
     std::vector<cv::Point2f> rot;
 
-    // Coefficients of variation for horizontal and vertical spacing.
     float cvx = 1e9F;
     float cvy = 1e9F;
 
-    // Strict geometry validation.
     bool spacing_ok = false;
-
-    // More tolerant geometry validation used to report a warning rather
-    // than rejecting an otherwise plausible marker.
     bool spacing_soft_ok = false;
 };

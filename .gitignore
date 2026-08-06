@@ -27,3 +27,9 @@ output/
 docs/images/*.tmp
 .DS_Store
 compile_commands.json
+
+# Private evaluation material is intentionally external to this repository
+data/
+legacy/
+Marker Coverage Estimator.pdf
+private-evaluation/

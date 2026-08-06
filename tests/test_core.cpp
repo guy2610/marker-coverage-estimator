@@ -207,8 +207,7 @@ void test_invalid_image() {
         analyze_marker(
             empty_image,
             SegmentationParams{},
-            GridParams{},
-            LegacyDecisionParams{}
+            GridParams{}
         );
 
     expect_true(
@@ -246,8 +245,7 @@ void test_image_without_color_patches() {
         analyze_marker(
             black_image,
             SegmentationParams{},
-            GridParams{},
-            LegacyDecisionParams{}
+            GridParams{}
         );
 
     expect_true(

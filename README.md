@@ -7,45 +7,51 @@
 A deterministic C++17/OpenCV pipeline that detects a colored 3×3 marker,
 validates its geometry, and estimates how much of an image it covers.
 
-The project started as a computer-vision assignment and was later reworked into
-a portable, tested command-line application with explicit detection semantics,
-diagnostic visualizations, regression tests, and Linux CI.
+The project includes a reusable core library, command-line interface, synthetic
+dataset generator, annotated diagnostics, automated tests, and Linux CI.
 
 ## Visual diagnostics
 
 | Detected | Detected with warning | Not detected |
 |---|---|---|
-| <img src="docs/images/hi8_annotated.png" width="290" alt="Strict marker detection"> | <img src="docs/images/hi11_annotated.png" width="290" alt="Marker detection with geometry warning"> | <img src="docs/images/hi6_annotated.png" width="290" alt="Rejected marker candidate"> |
-| Regular 3×3 geometry, even though coverage is only 38.6%. | Marker retained with an irregular-spacing warning. | Candidate grid rejected because vertical spacing is too irregular. |
+| <img src="docs/images/clean_centered_annotated.png" width="290" alt="Synthetic strict marker detection"> | <img src="docs/images/irregular_spacing_annotated.png" width="290" alt="Synthetic marker detection with spacing warning"> | <img src="docs/images/missing_patch_annotated.png" width="290" alt="Synthetic missing-patch rejection"> |
+| Regular synthetic 3×3 marker. | One displaced cell passes tolerant, but not strict, geometry. | Eight detected patches cannot fill the complete grid. |
 
 Visualization legend:
 
-- thin yellow boxes: every color-segmentation candidate;
-- thick colored boxes: the nine patches selected for the grid;
+- thin yellow boxes: segmentation candidates;
+- thick colored boxes: the selected grid;
 - `rNcM` labels: assigned row and column;
-- pink outline: the convex hull used for coverage.
+- pink outline: the coverage convex hull.
 
-## Why detection and coverage are separate
+## Dataset provenance
 
-The original implementation required a minimum coverage ratio before reporting
-a marker. That caused a geometrically valid marker such as `hi8` to be reported
-as `0%` simply because it occupied less than 45% of the image.
+The original implementation was developed and evaluated on 20 real-world
+images containing substantial color clutter and false-positive candidates.
+Those images are not redistributed in this repository.
 
-The current model treats these as separate questions:
+The public repository instead generates synthetic images for reproducible
+tests, examples, diagnostics, and coverage ground truth. The synthetic set is
+not claimed to reproduce the full difficulty or visual distribution of the
+private real-world evaluation set.
+
+See [docs/DATASET.md](docs/DATASET.md) for the complete data policy.
+
+## Detection and coverage are separate
+
+The detector answers two different questions:
 
 1. Do the selected patches form a plausible 3×3 marker?
-2. What percentage of the image does that marker cover?
+2. What percentage of the image does the selected marker cover?
 
-A valid small marker can therefore be detected and still report low coverage.
+A small, geometrically regular marker can therefore be detected even when its
+coverage is low.
 
 ## Detection statuses
 
-The normal CLI returns one of three states:
-
-- `DETECTED` — the selected grid passes strict spacing validation;
-- `DETECTED_WITH_WARNING` — the grid passes tolerant, but not strict,
-  spacing validation;
-- `NOT_DETECTED` — assignment or geometry validation fails.
+- `DETECTED` — strict spacing validation passed.
+- `DETECTED_WITH_WARNING` — tolerant, but not strict, spacing passed.
+- `NOT_DETECTED` — assignment or geometry validation failed.
 
 Coverage is reported for both successful states.
 
@@ -74,21 +80,8 @@ Greedy assignment to a 3×3 grid
    └── convex hull ─────────► image coverage
 ```
 
-At a high level:
-
-1. Convert BGR to HSV and create masks for red, green, blue, yellow, cyan,
-   and magenta.
-2. Clean each mask with morphological opening and closing.
-3. Extract contour candidates and filter them by image-relative area.
-4. Rotate patch centers into PCA coordinates.
-5. Cluster horizontal and vertical coordinates into three rows and three
-   columns.
-6. Assign nine candidates to grid cells.
-7. Measure spacing consistency using coefficients of variation.
-8. Compute coverage from the convex hull of the selected patch rectangles.
-
-See [ALGORITHM.md](ALGORITHM.md) for the detailed algorithm and
-[docs/DETECTION_MODEL.md](docs/DETECTION_MODEL.md) for the status model.
+See [ALGORITHM.md](ALGORITHM.md) for the detailed implementation and
+[docs/DETECTION_MODEL.md](docs/DETECTION_MODEL.md) for status semantics.
 
 ## Build
 
@@ -97,7 +90,7 @@ See [ALGORITHM.md](ALGORITHM.md) for the detailed algorithm and
 - CMake 3.16 or newer
 - C++17 compiler
 - OpenCV 4
-- Python 3 when building the regression tests
+- Python 3 when building tests
 
 ### Ubuntu
 
@@ -134,106 +127,84 @@ cmake \
 cmake --build build --parallel
 ```
 
-## Usage
+## Generate public sample data
 
-Analyze one or more images:
+```bash
+./build/generate-synthetic-dataset \
+  output/synthetic
+```
+
+Generated output:
+
+```text
+output/synthetic/
+├── images/
+├── manifest.csv
+└── contact_sheet.png
+```
+
+The manifest records intended scenario labels and polygon-based ground-truth
+coverage.
+
+## Usage
 
 ```bash
 ./build/marker-coverage \
-  data/hi8.png \
-  data/hi11.png
+  output/synthetic/images/clean_centered.png \
+  output/synthetic/images/irregular_spacing.png
 ```
 
 Example output:
 
 ```text
-data/hi8.png marker_found coverage=38.6%
-data/hi11.png marker_found coverage=57.0% warning=IRREGULAR_SPACING
+output/synthetic/images/clean_centered.png marker_found coverage=23.1%
+output/synthetic/images/irregular_spacing.png marker_found coverage=20.6% warning=IRREGULAR_SPACING
 
 Summary: detected=1 warnings=1 not_detected=0 out of 2
-```
-
-Print detailed metrics:
-
-```bash
-./build/marker-coverage \
-  --debug \
-  data/hi8.png
 ```
 
 Generate annotated images:
 
 ```bash
 ./build/marker-coverage \
-  --visualize-dir output/debug \
-  data/hi6.png \
-  data/hi8.png
+  --debug \
+  --visualize-dir output/annotated \
+  output/synthetic/images/clean_centered.png
 ```
 
-Show all CLI options:
+Show all options:
 
 ```bash
 ./build/marker-coverage --help
 ```
 
-## Legacy comparison
+## Public synthetic scenarios
 
-The original implementation is preserved at the annotated tag:
+### Stable regression cases
 
-```text
-v0.1.0-baseline
-```
+| Scenario | Expected behavior |
+|---|---|
+| Centered marker | Detected |
+| Small marker | Detected with low reported coverage |
+| Rotation `+20°` | Detected |
+| Rotation `-28°` | Detected |
+| Controlled perspective | Detected |
+| Irregular spacing | Detected with warning |
+| Missing center patch | Not detected |
+| Blank image | Not detected |
 
-The compatibility mode reproduces the original acceptance rules, where
-coverage participated in the detection decision:
+### Challenge cases
 
-```bash
-./build/marker-coverage \
-  --legacy-output \
-  data/hi1.png \
-  data/hi8.png
-```
+The generator also creates:
 
-The supplied 20-image dataset still produces the original legacy decision
-summary:
+- lower-contrast blur and noise;
+- additional colored distractors.
 
-```text
-passed=18 failed=2
-```
-
-The original K-means initialization was nondeterministic, so some individual
-rounded coverage values varied between runs. The current implementation resets
-the OpenCV random seed for each clustering operation, making per-image results
-repeatable and independent of batch order.
-
-## Regression dataset
-
-Normal mode currently produces:
-
-| Status | Count |
-|---|---:|
-| Strict detections | 15 |
-| Detections with warning | 2 |
-| Not detected | 3 |
-| Total | 20 |
-
-The warning cases are `hi11` and `hi17`. The rejected cases are `hi6`, `hi7`,
-and `hi13`.
-
-These figures describe behavior on the supplied regression images. They are
-not an accuracy benchmark and do not measure generalization to unseen images.
+These currently expose known weaknesses in segmentation and candidate
+assignment. They are generated for development, but are not required to pass
+the stable regression suite.
 
 ## Tests
-
-The project builds the computer-vision pipeline as a reusable static library
-and tests it at two levels:
-
-- native C++ unit tests for geometry, coverage, invalid input, and status
-  behavior;
-- Python end-to-end tests for the CLI, dataset regression, determinism,
-  legacy mode, and visualization generation.
-
-Run all tests with:
 
 ```bash
 ctest \
@@ -241,8 +212,17 @@ ctest \
   --output-on-failure
 ```
 
-The same build and test suite runs automatically on Ubuntu through
-GitHub Actions.
+The test suite includes:
+
+- native C++ core tests;
+- runtime generation of synthetic input images;
+- CLI classification tests;
+- low-coverage reporting;
+- repeated-run determinism;
+- batch-order independence;
+- visualization generation.
+
+The same suite runs automatically on Ubuntu through GitHub Actions.
 
 See [docs/TESTING.md](docs/TESTING.md) for details.
 
@@ -253,28 +233,25 @@ See [docs/TESTING.md](docs/TESTING.md) for details.
 ├── CMakeLists.txt
 ├── include/                 Public C++ interfaces
 ├── src/                     Core pipeline, CLI and visualization
-├── tests/                   C++ unit and Python CLI tests
-├── data/                    Supplied regression images
+├── tools/                   Synthetic dataset generator
+├── tests/                   C++ and Python tests
 ├── docs/
-│   ├── BASELINE.md
+│   ├── DATASET.md
 │   ├── DETECTION_MODEL.md
 │   ├── TESTING.md
-│   └── images/              README diagnostic examples
-├── legacy/                  Original Visual Studio source files
+│   └── images/              Synthetic README examples
 └── .github/workflows/       Linux continuous integration
 ```
 
 ## Known limitations
 
-- HSV thresholds are fixed and sensitive to lighting and color variation.
+- Fixed HSV thresholds are sensitive to lighting and color variation.
 - False-positive patches influence PCA and K-means.
 - All segmentation candidates participate in clustering.
-- Final grid selection uses a greedy assignment rather than a global optimum.
-- One incorrectly selected patch can distort spacing and the coverage hull.
+- Final grid selection uses greedy assignment.
+- One incorrect patch can distort spacing and the coverage hull.
 - Coverage uses axis-aligned contour bounding boxes.
-- Perspective distortion is not explicitly corrected with a homography.
-- The expected color arrangement of the marker is not validated.
-- Current spacing thresholds are heuristic.
-
-The next algorithmic improvement should focus on candidate filtering and global
-grid assignment rather than simply widening the spacing thresholds.
+- Perspective is not explicitly rectified with a homography.
+- The expected marker color arrangement is not validated.
+- Spacing thresholds are heuristic.
+- The public synthetic set is not an accuracy benchmark.
