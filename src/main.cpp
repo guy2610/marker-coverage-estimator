@@ -35,6 +35,8 @@ void print_usage(const char* program_name) {
         << "  --debug          Print intermediate detection metrics\n"
         << "  --visualize-dir DIR\n"
         << "                    Save annotated debug images to DIR\n"
+        << "  --diagnostics-dir DIR\n"
+        << "                    Save detector stage images to DIR\n"
         << "  -h, --help       Show this help message\n"
         << "  --version        Print the program version\n";
 }
@@ -107,6 +109,7 @@ int main(int argc, char** argv) {
     bool invalid_input = false;
 
     std::filesystem::path visualization_directory;
+    std::filesystem::path diagnostics_directory;
     std::vector<std::string> image_paths;
 
     for (int index = 1; index < argc; ++index) {
@@ -144,6 +147,21 @@ int main(int argc, char** argv) {
             }
 
             visualization_directory =
+                argv[++index];
+
+            continue;
+        }
+
+        if (argument == "--diagnostics-dir") {
+            if (index + 1 >= argc) {
+                std::cerr
+                    << "--diagnostics-dir requires "
+                    << "a directory path.\n";
+
+                return 2;
+            }
+
+            diagnostics_directory =
                 argv[++index];
 
             continue;
@@ -208,6 +226,24 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!diagnostics_directory.empty()) {
+        std::error_code directory_error;
+
+        std::filesystem::create_directories(
+            diagnostics_directory,
+            directory_error
+        );
+
+        if (directory_error) {
+            std::cerr
+                << "Could not create diagnostics directory: "
+                << diagnostics_directory
+                << "\n";
+
+            return 2;
+        }
+    }
+
     SegmentationParams segmentation_params;
     segmentation_params.debug = debug_mode;
 
@@ -230,11 +266,19 @@ int main(int argc, char** argv) {
                 cv::IMREAD_COLOR
             );
 
+        DetectionDiagnostics diagnostics;
+
+        DetectionDiagnostics* diagnostics_pointer =
+            diagnostics_directory.empty()
+                ? nullptr
+                : &diagnostics;
+
         const DetectionResult result =
             analyze_marker(
                 image,
                 segmentation_params,
-                grid_params
+                grid_params,
+                diagnostics_pointer
             );
 
         const auto elapsed_microseconds =
@@ -351,6 +395,40 @@ int main(int argc, char** argv) {
                     << ")\n";
 
                 processing_error = true;
+            }
+        }
+
+        if (
+            !diagnostics_directory.empty() &&
+            !image.empty()
+        ) {
+            const std::filesystem::path input_path(
+                path
+            );
+
+            const std::filesystem::path case_directory =
+                diagnostics_directory /
+                input_path.stem();
+
+            if (
+                !save_detection_stage_images(
+                    case_directory,
+                    image,
+                    result,
+                    diagnostics
+                )
+            ) {
+                std::cerr
+                    << "Could not save detector stages: "
+                    << case_directory
+                    << "\n";
+
+                processing_error = true;
+            } else if (debug_mode) {
+                std::cout
+                    << "[diagnostics] "
+                    << case_directory
+                    << "\n";
             }
         }
     }

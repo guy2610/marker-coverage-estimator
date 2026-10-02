@@ -9,4 +9,8 @@ struct SegmentationParams {
     bool   debug = false;
 };
 
-std::vector<Patch> segment_color_patches(const cv::Mat& bgr, const SegmentationParams& params);
+std::vector<Patch> segment_color_patches(
+    const cv::Mat& bgr,
+    const SegmentationParams& params,
+    DetectionDiagnostics* diagnostics = nullptr
+);

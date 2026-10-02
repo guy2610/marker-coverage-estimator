@@ -2,6 +2,7 @@
 
 #include <opencv2/opencv.hpp>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -78,4 +79,45 @@ struct GridDetection {
 
     bool spacing_ok = false;
     bool spacing_soft_ok = false;
+};
+
+// Optional read-only capture of intermediate values already computed by
+// the detector. These diagnostics must never affect detection decisions.
+struct SegmentationDiagnostics {
+    std::array<std::string, 6> labels = {
+        "red",
+        "green",
+        "blue",
+        "yellow",
+        "cyan",
+        "magenta"
+    };
+
+    std::array<cv::Mat, 6> raw_masks;
+    std::array<cv::Mat, 6> cleaned_masks;
+};
+
+struct GridDiagnostics {
+    bool pca_available = false;
+    cv::Point2f pca_mean{};
+    std::array<cv::Point2f, 2> pca_axes{};
+
+    bool clustering_available = false;
+    std::vector<int> row_labels;
+    std::vector<int> column_labels;
+    std::array<float, 3> row_centers{};
+    std::array<float, 3> column_centers{};
+
+    std::array<std::array<int, 3>, 3> assigned_patch_ids = {{
+        {{-1, -1, -1}},
+        {{-1, -1, -1}},
+        {{-1, -1, -1}}
+    }};
+
+    int assigned_count = 0;
+};
+
+struct DetectionDiagnostics {
+    SegmentationDiagnostics segmentation;
+    GridDiagnostics grid;
 };

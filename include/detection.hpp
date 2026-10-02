@@ -31,5 +31,6 @@ struct DetectionResult {
 DetectionResult analyze_marker(
     const cv::Mat& image,
     const SegmentationParams& segmentation_params,
-    const GridParams& grid_params
+    const GridParams& grid_params,
+    DetectionDiagnostics* diagnostics = nullptr
 );

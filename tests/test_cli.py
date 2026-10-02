@@ -656,6 +656,64 @@ def main() -> int:
             "Annotated visualization is empty",
         )
 
+        diagnostics_directory = (
+            dataset_root / "diagnostics"
+        )
+
+        diagnostics_result = run_process(
+            [
+                str(executable),
+                "--diagnostics-dir",
+                str(diagnostics_directory),
+                str(clean_path),
+            ],
+            project_root,
+        )
+
+        expect_result(
+            diagnostics_result,
+            0,
+            ["clean_centered.png marker_found"],
+            "Diagnostic stage generation",
+        )
+
+        diagnostic_case_directory = (
+            diagnostics_directory /
+            "clean_centered"
+        )
+
+        expected_stage_files = [
+            "01_input.png",
+            "02_threshold_masks.png",
+            "03_cleaned_masks.png",
+            "04_candidates.png",
+            "05_geometry.png",
+            "06_grid_assignment.png",
+            "07_result.png",
+        ]
+
+        for stage_filename in expected_stage_files:
+            stage_path = (
+                diagnostic_case_directory /
+                stage_filename
+            )
+
+            expect(
+                stage_path.is_file(),
+                (
+                    "Diagnostic stage image "
+                    f"was not created: {stage_filename}"
+                ),
+            )
+
+            expect(
+                stage_path.stat().st_size > 0,
+                (
+                    "Diagnostic stage image "
+                    f"is empty: {stage_filename}"
+                ),
+            )
+
     print(
         "All synthetic CLI regression tests passed."
     )

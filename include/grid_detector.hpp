@@ -26,5 +26,6 @@ struct GridParams {
 FailureReason detect_grid_and_spacing(
     const std::vector<Patch>& patches,
     GridDetection& out,
-    const GridParams& params
+    const GridParams& params,
+    DetectionDiagnostics* diagnostics = nullptr
 );

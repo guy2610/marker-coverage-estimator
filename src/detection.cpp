@@ -3,9 +3,15 @@
 DetectionResult analyze_marker(
     const cv::Mat& image,
     const SegmentationParams& segmentation_params,
-    const GridParams& grid_params
+    const GridParams& grid_params,
+    DetectionDiagnostics* diagnostics
 ) {
     DetectionResult result;
+
+    if (diagnostics != nullptr) {
+        *diagnostics =
+            DetectionDiagnostics{};
+    }
 
     if (image.empty()) {
         result.failure_reason =
@@ -17,7 +23,8 @@ DetectionResult analyze_marker(
     result.patches =
         segment_color_patches(
             image,
-            segmentation_params
+            segmentation_params,
+            diagnostics
         );
 
     const auto& patches =
@@ -37,7 +44,8 @@ DetectionResult analyze_marker(
         detect_grid_and_spacing(
             patches,
             result.grid,
-            grid_params
+            grid_params,
+            diagnostics
         );
 
     if (grid_failure != FailureReason::NONE) {

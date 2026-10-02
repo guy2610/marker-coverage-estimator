@@ -32,9 +32,14 @@ static float stdev(const std::vector<float>& v){
 FailureReason detect_grid_and_spacing(
     const std::vector<Patch>& patches,
     GridDetection& out,
-    const GridParams& params)
+    const GridParams& params,
+    DetectionDiagnostics* diagnostics)
 {
     out = GridDetection{};
+
+    if (diagnostics != nullptr) {
+        diagnostics->grid = GridDiagnostics{};
+    }
 
     if (patches.size() < 3) return FailureReason::FEW_PATCHES;
 
@@ -43,6 +48,21 @@ FailureReason detect_grid_and_spacing(
     for (auto& p: patches) centers.push_back(p.center);
     Point2f meanP; Mat eigvecs;
     pca_rotate(centers, out.rot, meanP, eigvecs);
+
+    if (diagnostics != nullptr) {
+        diagnostics->grid.pca_available = true;
+        diagnostics->grid.pca_mean = meanP;
+
+        diagnostics->grid.pca_axes[0] = Point2f(
+            eigvecs.at<float>(0, 0),
+            eigvecs.at<float>(0, 1)
+        );
+
+        diagnostics->grid.pca_axes[1] = Point2f(
+            eigvecs.at<float>(1, 0),
+            eigvecs.at<float>(1, 1)
+        );
+    }
 
     // KMeans rows (y')
     Mat sampY((int)patches.size(),1,CV_32F);
@@ -127,6 +147,40 @@ FailureReason detect_grid_and_spacing(
         }
     }
 
+    if (diagnostics != nullptr) {
+        diagnostics->grid.clustering_available = true;
+
+        diagnostics->grid.row_labels.resize(
+            patches.size()
+        );
+
+        diagnostics->grid.column_labels.resize(
+            patches.size()
+        );
+
+        for (int idx = 0; idx < (int)patches.size(); ++idx) {
+            diagnostics->grid.row_labels[idx] =
+                label2row[
+                    labelsY.at<int>(idx, 0)
+                ];
+
+            diagnostics->grid.column_labels[idx] =
+                label2col[
+                    labelsX.at<int>(idx, 0)
+                ];
+        }
+
+        for (int row = 0; row < 3; ++row) {
+            diagnostics->grid.row_centers[row] =
+                rowCenterY[row];
+        }
+
+        for (int column = 0; column < 3; ++column) {
+            diagnostics->grid.column_centers[column] =
+                colCenterX[column];
+        }
+    }
+
     // Greedy assignment to 9 intersections
     struct Cand { int r,c,idx; float d; };
     std::vector<Cand> cands; cands.reserve(patches.size()*9);
@@ -153,8 +207,24 @@ FailureReason detect_grid_and_spacing(
         out.grid[c.r][c.c] = patches[c.idx];
         cell_used[c.r][c.c] = true;
         patch_used[c.idx] = 1;
-        if (++assigned==9) break;
+
+        if (diagnostics != nullptr) {
+            diagnostics
+                ->grid
+                .assigned_patch_ids[c.r][c.c] =
+                patches[c.idx].id;
+        }
+
+        ++assigned;
+
+        if (diagnostics != nullptr) {
+            diagnostics->grid.assigned_count =
+                assigned;
+        }
+
+        if (assigned == 9) break;
     }
+
     if (assigned != 9) return FailureReason::ASSIGN_GRID;
 
     out.ok = true;

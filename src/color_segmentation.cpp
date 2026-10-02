@@ -11,7 +11,11 @@ static void cleanMask(Mat& mask) {
     morphologyEx(mask, mask, MORPH_CLOSE, k);
 }
 
-std::vector<Patch> segment_color_patches(const cv::Mat& bgr, const SegmentationParams& params) {
+std::vector<Patch> segment_color_patches(
+    const cv::Mat& bgr,
+    const SegmentationParams& params,
+    DetectionDiagnostics* diagnostics
+) {
     CV_Assert(!bgr.empty());
     Mat hsv; cvtColor(bgr, hsv, COLOR_BGR2HSV);
     GaussianBlur(hsv, hsv, Size(3,3), 0);
@@ -25,7 +29,32 @@ std::vector<Patch> segment_color_patches(const cv::Mat& bgr, const SegmentationP
     Mat cyan    = inRangeHSV(hsv, { 80, 60, 60 }, { 95, 255, 255 });
     Mat magenta = inRangeHSV(hsv, {140, 60, 60 }, {170, 255, 255 });
 
-    for (Mat* m : { &red,&green,&blue,&yellow,&cyan,&magenta }) cleanMask(*m);
+    std::array<Mat*, 6> mask_ptrs = {
+        &red,
+        &green,
+        &blue,
+        &yellow,
+        &cyan,
+        &magenta
+    };
+
+    if (diagnostics != nullptr) {
+        for (std::size_t index = 0; index < mask_ptrs.size(); ++index) {
+            diagnostics->segmentation.raw_masks[index] =
+                mask_ptrs[index]->clone();
+        }
+    }
+
+    for (Mat* mask : mask_ptrs) {
+        cleanMask(*mask);
+    }
+
+    if (diagnostics != nullptr) {
+        for (std::size_t index = 0; index < mask_ptrs.size(); ++index) {
+            diagnostics->segmentation.cleaned_masks[index] =
+                mask_ptrs[index]->clone();
+        }
+    }
 
     vector<Patch> patches;
     const double img_area = (double)bgr.cols * (double)bgr.rows;
